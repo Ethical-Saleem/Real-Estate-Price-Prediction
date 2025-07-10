@@ -297,17 +297,23 @@ class RandomForestRealEstatePipeline:
             
             # Property size categories - convert continuous to categorical
             # This helps capture non-linear relationships
+            # Clean data first: remove inf/nan values for binning
+            finishedsqft_clean = self.df['FinishedSqft'].replace([np.inf, -np.inf], np.nan)
             self.df['property_size_category'] = pd.cut(
-                self.df['FinishedSqft'], 
-                bins=[0, 1000, 1500, 2500, 5000, np.inf],
-                labels=['Very Small', 'Small', 'Medium', 'Large', 'Very Large']
+                finishedsqft_clean, 
+                bins=[0, 1000, 1500, 2500, 5000, finishedsqft_clean.max() + 1],
+                labels=['Very Small', 'Small', 'Medium', 'Large', 'Very Large'],
+                include_lowest=True
             )
             
             # Lot size categories - similar reasoning
+            # Clean data first: remove inf/nan values for binning
+            lotsize_clean = self.df['Lotsize'].replace([np.inf, -np.inf], np.nan)
             self.df['lot_size_category'] = pd.cut(
-                self.df['Lotsize'],
-                bins=[0, 5000, 10000, 20000, 50000, np.inf],
-                labels=['Small Lot', 'Medium Lot', 'Large Lot', 'Very Large Lot', 'Estate']
+                lotsize_clean,
+                bins=[0, 5000, 10000, 20000, 50000, lotsize_clean.max() + 1],
+                labels=['Small Lot', 'Medium Lot', 'Large Lot', 'Very Large Lot', 'Estate'],
+                include_lowest=True
             )
         
         # 2. ROOM AND BATHROOM FEATURES
@@ -317,30 +323,53 @@ class RandomForestRealEstatePipeline:
             self.df['total_bathrooms'] = self.df['Fbath'] + (0.5 * self.df['Hbath'])
             
             # Bedroom to total room ratio - indicates room allocation
-            self.df['bedroom_ratio'] = self.df['Bdrms'] / self.df['Rooms']
+            # Handle division by zero
+            self.df['bedroom_ratio'] = np.where(
+                self.df['Rooms'] > 0, 
+                self.df['Bdrms'] / self.df['Rooms'], 
+                0
+            )
             
             # Bathroom to bedroom ratio - indicates convenience level
-            self.df['bathroom_bedroom_ratio'] = self.df['total_bathrooms'] / self.df['Bdrms']
-            self.df['bathroom_bedroom_ratio'] = self.df['bathroom_bedroom_ratio'].replace([np.inf, -np.inf], 0)
+            self.df['bathroom_bedroom_ratio'] = np.where(
+                self.df['Bdrms'] > 0,
+                self.df['total_bathrooms'] / self.df['Bdrms'],
+                0
+            )
             
             # Room efficiency features - space utilization
             if 'FinishedSqft' in self.df.columns:
-                self.df['room_efficiency'] = self.df['Rooms'] / self.df['FinishedSqft']
-                self.df['space_per_room'] = self.df['FinishedSqft'] / self.df['Rooms']
+                self.df['room_efficiency'] = np.where(
+                    self.df['FinishedSqft'] > 0,
+                    self.df['Rooms'] / self.df['FinishedSqft'],
+                    0
+                )
+                self.df['space_per_room'] = np.where(
+                    self.df['Rooms'] > 0,
+                    self.df['FinishedSqft'] / self.df['Rooms'],
+                    0
+                )
         
         # 3. PRICE-RELATED FEATURES
         # These help understand value patterns
         if 'Sale_price' in self.df.columns:
             if 'FinishedSqft' in self.df.columns:
                 # Price per square foot - key real estate metric
-                self.df['price_per_sqft'] = self.df['Sale_price'] / self.df['FinishedSqft']
+                self.df['price_per_sqft'] = np.where(
+                    self.df['FinishedSqft'] > 0,
+                    self.df['Sale_price'] / self.df['FinishedSqft'],
+                    0
+                )
                 
                 # Price per square foot categories - market segments
-                self.df['price_per_sqft_category'] = pd.cut(
-                    self.df['price_per_sqft'],
-                    bins=5,
-                    labels=['Budget', 'Economy', 'Mid-range', 'Premium', 'Luxury']
-                )
+                # Clean data first: remove inf/nan values for binning
+                price_per_sqft_clean = self.df['price_per_sqft'].replace([np.inf, -np.inf], np.nan)
+                if price_per_sqft_clean.notna().sum() > 0:  # Only if we have valid data
+                    self.df['price_per_sqft_category'] = pd.cut(
+                        price_per_sqft_clean,
+                        bins=5,
+                        labels=['Budget', 'Economy', 'Mid-range', 'Premium', 'Luxury']
+                    )
             
             # Log transformation for price - helps with skewed distributions
             # log1p is log(1+x) which handles zero values safely
@@ -348,14 +377,18 @@ class RandomForestRealEstatePipeline:
         
         # 4. NEIGHBORHOOD AND LOCATION FEATURES
         # Location is crucial in real estate - these features capture location value
-        if 'nbhd' in self.df.columns:
+        if 'nbhd' in self.df.columns and 'Sale_price' in self.df.columns:
             # Neighborhood price statistics - market positioning
             nbhd_stats = self.df.groupby('nbhd')['Sale_price'].agg(['mean', 'median', 'std']).reset_index()
             nbhd_stats.columns = ['nbhd', 'nbhd_mean_price', 'nbhd_median_price', 'nbhd_price_std']
             self.df = self.df.merge(nbhd_stats, on='nbhd', how='left')
             
             # Price deviation from neighborhood average - relative value
-            self.df['price_deviation_from_nbhd'] = (self.df['Sale_price'] - self.df['nbhd_mean_price']) / self.df['nbhd_mean_price']
+            self.df['price_deviation_from_nbhd'] = np.where(
+                self.df['nbhd_mean_price'] > 0,
+                (self.df['Sale_price'] - self.df['nbhd_mean_price']) / self.df['nbhd_mean_price'],
+                0
+            )
             
             # Neighborhood ranking based on median price - prestige indicator
             nbhd_ranking = self.df.groupby('nbhd')['Sale_price'].median().rank(ascending=False).reset_index()
@@ -364,16 +397,28 @@ class RandomForestRealEstatePipeline:
         
         # 5. PROPERTY AGE AND CONDITION FEATURES
         # Age affects property value in complex ways
-        if 'Built' in self.df.columns:
+        if 'Year_Built' in self.df.columns:  # Fixed: should be Year_Built, not Built
             current_year = datetime.now().year
-            self.df['property_age'] = current_year - self.df['Built']
+            self.df['property_age'] = current_year - self.df['Year_Built']
+            
+            # Handle negative ages (future dates) and inf values
+            self.df['property_age'] = np.where(
+                self.df['property_age'] < 0,
+                0,
+                self.df['property_age']
+            )
             
             # Age categories - different age ranges have different market appeal
-            self.df['age_category'] = pd.cut(
-                self.df['property_age'],
-                bins=[0, 5, 15, 30, 50, np.inf],
-                labels=['New', 'Modern', 'Established', 'Mature', 'Historic']
-            )
+            # Clean data first: remove inf/nan values for binning
+            property_age_clean = self.df['property_age'].replace([np.inf, -np.inf], np.nan)
+            if property_age_clean.notna().sum() > 0:  # Only if we have valid data
+                max_age = property_age_clean.max()
+                self.df['age_category'] = pd.cut(
+                    property_age_clean,
+                    bins=[0, 5, 15, 30, 50, max_age + 1],
+                    labels=['New', 'Modern', 'Established', 'Mature', 'Historic'],
+                    include_lowest=True
+                )
             
             # Depreciation factor - exponential decay model
             # Assumes property value decreases exponentially with age
@@ -384,45 +429,68 @@ class RandomForestRealEstatePipeline:
         if all(col in self.df.columns for col in ['FinishedSqft', 'Lotsize', 'total_bathrooms', 'Rooms']):
             # Property luxury score - composite feature
             # Weighted combination of size, amenities, and space
-            self.df['luxury_score'] = (
-                (self.df['FinishedSqft'] / self.df['FinishedSqft'].median()) * 0.3 +
-                (self.df['total_bathrooms'] / self.df['total_bathrooms'].median()) * 0.2 +
-                (self.df['Rooms'] / self.df['Rooms'].median()) * 0.2 +
-                (self.df['Lotsize'] / self.df['Lotsize'].median()) * 0.3
-            )
+            # Use safe median calculation to avoid division by zero
+            finishedsqft_median = self.df['FinishedSqft'].median()
+            bathrooms_median = self.df['total_bathrooms'].median()
+            rooms_median = self.df['Rooms'].median()
+            lotsize_median = self.df['Lotsize'].median()
+            
+            # Only calculate if medians are valid
+            if all(x > 0 for x in [finishedsqft_median, bathrooms_median, rooms_median, lotsize_median]):
+                self.df['luxury_score'] = (
+                    (self.df['FinishedSqft'] / finishedsqft_median) * 0.3 +
+                    (self.df['total_bathrooms'] / bathrooms_median) * 0.2 +
+                    (self.df['Rooms'] / rooms_median) * 0.2 +
+                    (self.df['Lotsize'] / lotsize_median) * 0.3
+                )
+                # Handle any remaining inf values
+                self.df['luxury_score'] = self.df['luxury_score'].replace([np.inf, -np.inf], 0)
         
         # 7. STATISTICAL TRANSFORMATIONS
         # Handle skewed distributions for better model performance
         numeric_cols = self.df.select_dtypes(include=[np.number]).columns
         for col in numeric_cols:
             if col not in ['Sale_price', 'District', 'nbhd'] and col in original_features:
+                # Skip if column has inf values that can't be handled
+                if np.isinf(self.df[col]).any():
+                    continue
+                    
                 # Check if feature is highly skewed
-                col_skew = skew(self.df[col].dropna())
+                col_data = self.df[col].dropna()
+                if len(col_data) == 0:
+                    continue
+                    
+                col_skew = skew(col_data)
                 if abs(col_skew) > 1.5:  # Rule of thumb: |skewness| > 1.5 is highly skewed
                     # Box-Cox transformation for positive values
-                    if (self.df[col] > 0).all():
+                    if (col_data > 0).all():
                         try:
-                            self.df[f'{col}_boxcox'], _ = boxcox(self.df[col] + 1)
+                            self.df[f'{col}_boxcox'], _ = boxcox(col_data + 1)
                             self.engineered_features.append(f'{col}_boxcox')
                         except:
                             # Fall back to log transformation if Box-Cox fails
-                            self.df[f'{col}_log'] = np.log1p(self.df[col])
+                            self.df[f'{col}_log'] = np.log1p(col_data)
                             self.engineered_features.append(f'{col}_log')
                     else:
                         # Log transformation for features with negative values
-                        self.df[f'{col}_log'] = np.log1p(self.df[col] - self.df[col].min() + 1)
+                        min_val = col_data.min()
+                        self.df[f'{col}_log'] = np.log1p(col_data - min_val + 1)
                         self.engineered_features.append(f'{col}_log')
         
         # 8. CLUSTERING FEATURES
         # Discover hidden patterns in the data
-        self._create_clustering_features()
+        if hasattr(self, '_create_clustering_features'):
+            self._create_clustering_features()
         
         # 9. POLYNOMIAL FEATURES (selective)
         # Capture non-linear relationships
-        self._create_polynomial_features()
+        if hasattr(self, '_create_polynomial_features'):
+            self._create_polynomial_features()
         
         # Track engineered features
         new_features = [col for col in self.df.columns if col not in original_features]
+        if not hasattr(self, 'engineered_features'):
+            self.engineered_features = []
         self.engineered_features.extend(new_features)
         
         print(f"Created {len(new_features)} new features:")
@@ -626,373 +694,745 @@ class RandomForestRealEstatePipeline:
                 print(f"Winsorized {outliers_count} outliers in {col} ({outliers_pct:.1f}%)")
                 
     def _validate_data_quality(self):
-        """Validate data quality after preprocessing"""
+        """
+        Validate data quality after preprocessing
+        
+        Final quality checks to ensure data is ready for modeling:
+        - Check for remaining missing values
+        - Validate data types
+        - Check for infinite values
+        - Verify target variable distribution
+        - Feature correlation analysis (only for numeric columns)
+        """
         print("Validating data quality...")
         
-        # Check for remaining missing values
-        missing_count = self.df.isnull().sum().sum()
-        if missing_count > 0:
-            print(f"Warning: {missing_count} missing values remain")
+        # 1. CHECK FOR REMAINING MISSING VALUES
+        missing_values = self.df.isnull().sum()
+        if missing_values.sum() > 0:
+            print("Warning: Remaining missing values found:")
+            print(missing_values[missing_values > 0])
+            
+            # Handle remaining missing values
+            for col in missing_values[missing_values > 0].index:
+                if self.df[col].dtype == 'object' or self.df[col].dtype.name == 'category':
+                  # Convert categorical to object to avoid category restrictions
+                  if self.df[col].dtype.name == 'category':
+                    self.df[col] = self.df[col].astype('object')
+                    
+                  # For categorical/object columns, use mode or 'Unknown'
+                  if self.df[col].mode().empty:
+                    self.df[col] = self.df[col].fillna('Unknown')
+                    print(f"  Filled {col} with 'Unknown'")
+                  else:
+                    mode_val = self.df[col].mode()[0]
+                    self.df[col] = self.df[col].fillna(mode_val)
+                    print(f"  Filled {col} with mode: {mode_val}")
+                else:
+                    median_val = self.df[col].median()
+                    self.df[col] = self.df[col].fillna(median_val)
+                    print(f"  Filled {col} with median: {median_val}")
+        else:
+            print("✓ No missing values found")
         
-        # Check for infinite values
+        # 2. CHECK FOR INFINITE VALUES
+        print("Alert: checking for infinite values:")
         numeric_cols = self.df.select_dtypes(include=[np.number]).columns
+        inf_values = {}
         for col in numeric_cols:
             inf_count = np.isinf(self.df[col]).sum()
             if inf_count > 0:
-                print(f"Warning: {inf_count} infinite values in {col}")
-                self.df[col] = self.df[col].replace([np.inf, -np.inf], self.df[col].median())
+                inf_values[col] = inf_count
+                # Replace infinite values with column median (more robust)
+                finite_values = self.df[col].replace([np.inf, -np.inf], np.nan)
+                median_val = finite_values.median()
+                self.df[col] = self.df[col].replace([np.inf, -np.inf], median_val)
         
-        # Check for constant features
-        constant_features = [col for col in self.df.columns if self.df[col].nunique() <= 1]
-        if constant_features:
-            print(f"Removing {len(constant_features)} constant features: {constant_features}")
-            self.df.drop(constant_features, axis=1, inplace=True)
+        if inf_values:
+            print(f"Warning: Found and replaced infinite values in: {list(inf_values.keys())}")
+        else:
+            print("✓ No infinite values found")
         
-        print(f"Final dataset shape: {self.df.shape}")
-    
-    def prepare_features_target(self, target_column='Sale_price'):
-        """Advanced feature preparation with encoding and scaling"""
-        print(f"\nPreparing features and target: {target_column}")
-        
-        if target_column not in self.df.columns:
-            raise ValueError(f"Target column '{target_column}' not found")
-        
-        # Separate features and target
-        X = self.df.drop(target_column, axis=1)
-        y = self.df[target_column]
-        
-        # Handle categorical variables with advanced encoding
-        categorical_cols = X.select_dtypes(include=['object']).columns
-        
-        for col in categorical_cols:
-            unique_count = X[col].nunique()
+        # 3. VALIDATE TARGET VARIABLE
+        if 'Sale_price' in self.df.columns:
+            target_stats = {
+                'count': self.df['Sale_price'].count(),
+                'mean': self.df['Sale_price'].mean(),
+                'std': self.df['Sale_price'].std(),
+                'min': self.df['Sale_price'].min(),
+                'max': self.df['Sale_price'].max(),
+                'skewness': skew(self.df['Sale_price']),
+                'zero_values': (self.df['Sale_price'] == 0).sum(),
+                'negative_values': (self.df['Sale_price'] < 0).sum()
+            }
             
-            if unique_count <= 10:
-                # Use label encoding for low cardinality
-                if col not in self.label_encoders:
-                    self.label_encoders[col] = LabelEncoder()
-                X[col] = self.label_encoders[col].fit_transform(X[col].astype(str))
+            print(f"Target variable (Sale_price) statistics:")
+            for key, value in target_stats.items():
+                print(f"  {key}: {value:.2f}" if isinstance(value, float) else f"  {key}: {value}")
+            
+            # Check for problematic target values
+            if target_stats['zero_values'] > 0:
+                print(f"Warning: {target_stats['zero_values']} zero values in target variable")
+            if target_stats['negative_values'] > 0:
+                print(f"Warning: {target_stats['negative_values']} negative values in target variable")
+        
+        # 4. CHECK FEATURE CORRELATION WITH TARGET (ONLY NUMERIC COLUMNS)
+        if 'Sale_price' in self.df.columns:
+            # Only use numeric columns for correlation analysis
+            numeric_cols = self.df.select_dtypes(include=[np.number]).columns
+            
+            if len(numeric_cols) > 1:
+                numeric_df = self.df[numeric_cols]
+                correlations = numeric_df.corr()['Sale_price'].abs().sort_values(ascending=False)
+                print(f"\nTop 10 numeric features correlated with Sale_price:")
+                print(correlations.head(10))
+                
+                # Identify features with very low correlation
+                low_corr_features = correlations[correlations < 0.01].index.tolist()
+                if 'Sale_price' in low_corr_features:
+                    low_corr_features.remove('Sale_price')
+                if low_corr_features:
+                    print(f"\nNumeric features with very low correlation (<0.01): {len(low_corr_features)}")
             else:
-                # Use target encoding for high cardinality
-                target_mean = self.df.groupby(col)[target_column].mean()
-                X[col] = X[col].map(target_mean).fillna(target_mean.mean())
-                print(f"Applied target encoding to {col} ({unique_count} categories)")
+                print("Not enough numeric columns for correlation analysis")
         
-        # Remove highly correlated features
-        X = self._remove_highly_correlated_features(X)
+        # 5. CHECK FOR MULTICOLLINEARITY (ONLY NUMERIC FEATURES)
+        feature_numeric_cols = [col for col in numeric_cols if col != 'Sale_price']
         
-        # Store feature names
+        if len(feature_numeric_cols) > 1:
+            correlation_matrix = self.df[feature_numeric_cols].corr()
+            high_corr_pairs = []
+            for i in range(len(correlation_matrix.columns)):
+                for j in range(i+1, len(correlation_matrix.columns)):
+                    if abs(correlation_matrix.iloc[i, j]) > 0.95:
+                        high_corr_pairs.append((
+                            correlation_matrix.columns[i],
+                            correlation_matrix.columns[j],
+                            correlation_matrix.iloc[i, j]
+                        ))
+            
+            if high_corr_pairs:
+                print(f"\nWarning: Found {len(high_corr_pairs)} highly correlated feature pairs (>0.95):")
+                for pair in high_corr_pairs[:5]:  # Show first 5
+                    print(f"  {pair[0]} - {pair[1]}: {pair[2]:.3f}")
+            else:
+                print("✓ No severe multicollinearity detected")
+        else:
+            print("Not enough numeric features for multicollinearity analysis")
+        
+        # 6. DATA TYPE SUMMARY
+        print(f"\nData type summary:")
+        dtype_counts = self.df.dtypes.value_counts()
+        for dtype, count in dtype_counts.items():
+            print(f"  {dtype}: {count} columns")
+        
+        # 7. CATEGORICAL VARIABLE SUMMARY
+        categorical_cols = self.df.select_dtypes(include=['object', 'category']).columns
+        if len(categorical_cols) > 0:
+            print(f"\nCategorical variables found: {len(categorical_cols)}")
+            for col in categorical_cols:
+                unique_count = self.df[col].nunique()
+                print(f"  {col}: {unique_count} unique values")
+        else:
+            print("✓ No categorical variables found")
+        
+        # 8. FINAL DATA SHAPE AND MEMORY USAGE
+        print(f"\nFinal dataset shape: {self.df.shape}")
+        print(f"Memory usage: {self.df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
+        
+        return True
+    
+    def prepare_features_and_target(self, target_column='Sale_price'):
+        """
+        Prepare features and target variable for modeling
+        
+        This method separates features from target variable and handles
+        categorical encoding for machine learning algorithms.
+        
+        Args:
+            target_column (str): Name of the target variable column
+            
+        Returns:
+            tuple: (X_features, y_target) ready for modeling
+        """
+        print(f"\nPreparing features and target variable...")
+        
+        # Separate target variable
+        if target_column not in self.df.columns:
+            raise ValueError(f"Target column '{target_column}' not found in dataset")
+        
+        y = self.df[target_column].copy()
+        X = self.df.drop([target_column], axis=1)
+        
+        # Handle categorical variables
+        categorical_columns = X.select_dtypes(include=['object', 'category']).columns
+        
+        print(f"Encoding {len(categorical_columns)} categorical features...")
+        
+        for col in categorical_columns:
+            # Use LabelEncoder for categorical variables
+            le = LabelEncoder()
+            X[col] = le.fit_transform(X[col].astype(str))
+            self.label_encoders[col] = le
+            print(f"  Encoded {col}: {len(le.classes_)} categories")
+        
+        # Store feature names for later use
         self.feature_names = X.columns.tolist()
         
         print(f"Final feature set: {len(self.feature_names)} features")
-        print(f"Target variable shape: {y.shape}")
+        print(f"Target variable: {len(y)} samples")
         
         return X, y
     
-    def _remove_highly_correlated_features(self, X, threshold=0.95):
-        """Remove highly correlated features"""
-        print("Removing highly correlated features...")
+    def train_random_forest_model(self, X, y, test_size=0.2, optimize_hyperparameters=True):
+        """
+        Train Random Forest model with comprehensive evaluation
         
-        # Calculate correlation matrix
-        corr_matrix = X.corr().abs()
+        This method implements the complete machine learning workflow:
+        - Train/validation/test split
+        - Feature scaling
+        - Hyperparameter optimization
+        - Model training and evaluation
+        - Feature importance analysis
         
-        # Find highly correlated pairs
-        upper_tri = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+        Args:
+            X (pd.DataFrame): Feature matrix
+            y (pd.Series): Target variable
+            test_size (float): Proportion of data for testing
+            optimize_hyperparameters (bool): Whether to perform hyperparameter tuning
+            
+        Returns:
+            dict: Comprehensive model performance metrics
+        """
+        print(f"\nTraining Random Forest model...")
         
-        # Find features to drop
-        to_drop = [column for column in upper_tri.columns if any(upper_tri[column] > threshold)]
-        
-        if to_drop:
-            X = X.drop(to_drop, axis=1)
-            print(f"Removed {len(to_drop)} highly correlated features: {to_drop}")
-        
-        return X
-    
-    def train_advanced_random_forest(self, X, y, test_size=0.2, optimize_hyperparameters=True):
-        """Train Random Forest with advanced techniques"""
-        print("\nTraining Advanced Random Forest...")
-        
-        # Split data
+        # 1. TRAIN-TEST SPLIT
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=self.random_state, stratify=None
         )
         
-        self.X_train, self.X_test = X_train, X_test
-        self.y_train, self.y_test = y_train, y_test
+        print(f"Training set: {X_train.shape[0]} samples")
+        print(f"Test set: {X_test.shape[0]} samples")
         
+        # 2. FEATURE SCALING
+        # Scale features to improve model performance
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        X_test_scaled = self.scaler.transform(X_test)
+        
+        # Convert back to DataFrame for easier handling
+        X_train_scaled = pd.DataFrame(X_train_scaled, columns=X_train.columns, index=X_train.index)
+        X_test_scaled = pd.DataFrame(X_test_scaled, columns=X_test.columns, index=X_test.index)
+        
+        # 3. HYPERPARAMETER OPTIMIZATION
         if optimize_hyperparameters:
-            print("Advanced hyperparameter optimization...")
-            self.rf_model = self._advanced_hyperparameter_tuning(X_train, y_train)
+            print("Optimizing hyperparameters...")
+            best_params = self._optimize_hyperparameters(X_train_scaled, y_train)
+            self.rf_model = RandomForestRegressor(random_state=self.random_state, **best_params)
         else:
-            # Use optimized default parameters
+            # Use default parameters with some sensible choices
             self.rf_model = RandomForestRegressor(
-                n_estimators=300,
-                max_depth=20,
+                n_estimators=100,
+                max_depth=15,
                 min_samples_split=5,
                 min_samples_leaf=2,
-                max_features='sqrt',
-                bootstrap=True,
                 random_state=self.random_state,
                 n_jobs=-1
             )
         
-        # Train model
-        self.rf_model.fit(X_train, y_train)
+        # 4. MODEL TRAINING
+        print("Training model...")
+        self.rf_model.fit(X_train_scaled, y_train)
         
-        # Make predictions
-        y_pred_train = self.rf_model.predict(X_train)
-        y_pred_test = self.rf_model.predict(X_test)
+        # 5. MODEL EVALUATION
+        evaluation_results = self._comprehensive_model_evaluation(
+            X_train_scaled, X_test_scaled, y_train, y_test
+        )
         
-        self.y_pred_train = y_pred_train
-        self.y_pred_test = y_pred_test
+        # 6. FEATURE IMPORTANCE ANALYSIS
+        self._analyze_feature_importance(X_train_scaled)
         
-        # Calculate comprehensive metrics
-        train_metrics = self._calculate_comprehensive_metrics(y_train, y_pred_train)
-        test_metrics = self._calculate_comprehensive_metrics(y_test, y_pred_test)
+        # 7. CROSS-VALIDATION
+        cv_scores = cross_val_score(
+            self.rf_model, X_train_scaled, y_train, 
+            cv=5, scoring='neg_mean_squared_error', n_jobs=-1
+        )
         
-        print(f"\nAdvanced Training Results:")
-        print(f"Train R²: {train_metrics['r2']:.4f}")
-        print(f"Test R²: {test_metrics['r2']:.4f}")
-        print(f"Train RMSE: ${train_metrics['rmse']:,.2f}")
-        print(f"Test RMSE: ${test_metrics['rmse']:,.2f}")
-        print(f"Train MAE: ${train_metrics['mae']:,.2f}")
-        print(f"Test MAE: ${test_metrics['mae']:,.2f}")
-        print(f"Train MAPE: {train_metrics['mape']:.2f}%")
-        print(f"Test MAPE: {test_metrics['mape']:.2f}%")
-        print(f"Train MSE: ${train_metrics['mse']:,.2f}")
-        print(f"Test MSE: ${test_metrics['mse']:,.2f}")
+        evaluation_results['cv_rmse_mean'] = np.sqrt(-cv_scores.mean())
+        evaluation_results['cv_rmse_std'] = np.sqrt(cv_scores.std())
         
-        return {
-            'train_metrics': train_metrics,
-            'test_metrics': test_metrics,
-            'model': self.rf_model
-        }
+        print(f"Cross-validation RMSE: {evaluation_results['cv_rmse_mean']:.2f} ± {evaluation_results['cv_rmse_std']:.2f}")
+        
+        # Store data for later use
+        self.X_train, self.X_test = X_train_scaled, X_test_scaled
+        self.y_train, self.y_test = y_train, y_test
+        
+        return evaluation_results
     
     def _optimize_hyperparameters(self, X_train, y_train):
-        """Optimize Random Forest hyperparameters"""
+        """
+        Optimize Random Forest hyperparameters using GridSearchCV
+        
+        This method performs systematic hyperparameter optimization to find
+        the best combination of parameters for the Random Forest model.
+        
+        Args:
+            X_train (pd.DataFrame): Training features
+            y_train (pd.Series): Training target
+            
+        Returns:
+            dict: Best hyperparameters found
+        """
+        # Define parameter grid for optimization
         param_grid = {
-            'n_estimators': [100, 200, 300],
+            'n_estimators': [50, 100, 200],
             'max_depth': [10, 15, 20, None],
             'min_samples_split': [2, 5, 10],
             'min_samples_leaf': [1, 2, 4],
             'max_features': ['sqrt', 'log2', None]
         }
         
+        # Use a subset of data for faster hyperparameter optimization
+        if len(X_train) > 5000:
+            X_sample = X_train.sample(n=5000, random_state=self.random_state)
+            y_sample = y_train.loc[X_sample.index]
+        else:
+            X_sample, y_sample = X_train, y_train
+        
+        # Perform grid search
         rf_base = RandomForestRegressor(random_state=self.random_state, n_jobs=-1)
         
         grid_search = GridSearchCV(
-            rf_base, param_grid, cv=5, 
-            scoring='neg_mean_squared_error', 
-            n_jobs=-1, verbose=1
+            rf_base,
+            param_grid,
+            cv=5,
+            scoring='neg_mean_squared_error',
+            n_jobs=-1,
+            verbose=1
         )
         
-        grid_search.fit(X_train, y_train)
+        grid_search.fit(X_sample, y_sample)
         
-        print(f"Best parameters: {grid_search.best_params_}")
-        print(f"Best CV score: {-grid_search.best_score_:.4f}")
+        print(f"Best parameters found: {grid_search.best_params_}")
+        print(f"Best cross-validation score: {np.sqrt(-grid_search.best_score_):.2f}")
         
-        return grid_search.best_estimator_
+        return grid_search.best_params_
     
-    def _calculate_metrics(self, y_true, y_pred):
-        """Calculate regression metrics"""
-        return {
-            'r2': r2_score(y_true, y_pred),
-            'rmse': np.sqrt(mean_squared_error(y_true, y_pred)),
-            'mae': mean_absolute_error(y_true, y_pred),
-            'mse': mean_squared_error(y_true, y_pred)
+    def _comprehensive_model_evaluation(self, X_train, X_test, y_train, y_test):
+        """
+        Comprehensive model evaluation with multiple metrics
+        
+        This method evaluates the model performance using various metrics
+        and provides detailed analysis of prediction quality.
+        
+        Args:
+            X_train, X_test (pd.DataFrame): Training and test features
+            y_train, y_test (pd.Series): Training and test targets
+            
+        Returns:
+            dict: Comprehensive evaluation metrics
+        """
+        print("\nEvaluating model performance...")
+        
+        # Make predictions
+        y_train_pred = self.rf_model.predict(X_train)
+        y_test_pred = self.rf_model.predict(X_test)
+        
+        # Calculate metrics
+        metrics = {
+            'train_rmse': np.sqrt(mean_squared_error(y_train, y_train_pred)),
+            'test_rmse': np.sqrt(mean_squared_error(y_test, y_test_pred)),
+            'train_r2': r2_score(y_train, y_train_pred),
+            'test_r2': r2_score(y_test, y_test_pred),
+            'train_mae': mean_absolute_error(y_train, y_train_pred),
+            'test_mae': mean_absolute_error(y_test, y_test_pred),
+            'train_mape': mean_absolute_percentage_error(y_train, y_train_pred),
+            'test_mape': mean_absolute_percentage_error(y_test, y_test_pred)
         }
+        
+        # Print evaluation results
+        print("\nModel Performance Metrics:")
+        print("-" * 40)
+        print(f"Training RMSE: {metrics['train_rmse']:,.2f}")
+        print(f"Test RMSE: {metrics['test_rmse']:,.2f}")
+        print(f"Training R²: {metrics['train_r2']:.4f}")
+        print(f"Test R²: {metrics['test_r2']:.4f}")
+        print(f"Training MAE: {metrics['train_mae']:,.2f}")
+        print(f"Test MAE: {metrics['test_mae']:,.2f}")
+        print(f"Training MAPE: {metrics['train_mape']:.2f}%")
+        print(f"Test MAPE: {metrics['test_mape']:.2f}%")
+        
+        # Check for overfitting
+        rmse_diff = metrics['test_rmse'] - metrics['train_rmse']
+        r2_diff = metrics['train_r2'] - metrics['test_r2']
+        
+        print(f"\nOverfitting Analysis:")
+        print(f"RMSE difference (test - train): {rmse_diff:,.2f}")
+        print(f"R² difference (train - test): {r2_diff:.4f}")
+        
+        if rmse_diff > 0.2 * metrics['train_rmse']:
+            print("Warning: Possible overfitting detected (high RMSE difference)")
+        if r2_diff > 0.1:
+            print("Warning: Possible overfitting detected (high R² difference)")
+        
+        # Create prediction plots
+        self._create_prediction_plots(y_test, y_test_pred)
+        
+        return metrics
     
-    def analyze_feature_importance(self, top_n=20):
-        """Analyze and visualize feature importance"""
-        if self.rf_model is None:
-            raise ValueError("Model not trained yet. Call train_random_forest() first.")
+    def _create_prediction_plots(self, y_true, y_pred):
+        """
+        Create comprehensive prediction analysis plots
         
-        print(f"\nAnalyzing feature importance (top {top_n})...")
+        Visualizations help understand model performance and identify
+        areas where the model performs well or poorly.
         
-        # Get feature importance
-        importance = self.rf_model.feature_importances_
-        feature_importance = pd.DataFrame({
-            'feature': self.feature_names,
-            'importance': importance
+        Args:
+            y_true (pd.Series): True values
+            y_pred (np.array): Predicted values
+        """
+        print("\nCreating prediction analysis plots...")
+        
+        # 1. Actual vs Predicted scatter plot
+        plt.figure(figsize=(15, 5))
+        
+        plt.subplot(1, 3, 1)
+        plt.scatter(y_true, y_pred, alpha=0.5)
+        plt.plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], 'r--', lw=2)
+        plt.xlabel('Actual Values')
+        plt.ylabel('Predicted Values')
+        plt.title('Actual vs Predicted Values')
+        plt.grid(True, alpha=0.3)
+        
+        # 2. Residuals plot
+        plt.subplot(1, 3, 2)
+        residuals = y_true - y_pred
+        plt.scatter(y_pred, residuals, alpha=0.5)
+        plt.axhline(y=0, color='r', linestyle='--')
+        plt.xlabel('Predicted Values')
+        plt.ylabel('Residuals')
+        plt.title('Residuals Plot')
+        plt.grid(True, alpha=0.3)
+        
+        # 3. Residuals histogram
+        plt.subplot(1, 3, 3)
+        plt.hist(residuals, bins=30, alpha=0.7, edgecolor='black')
+        plt.xlabel('Residuals')
+        plt.ylabel('Frequency')
+        plt.title('Residuals Distribution')
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # 4. Prediction error distribution by price range
+        plt.figure(figsize=(12, 6))
+        
+        # Create price ranges
+        price_ranges = pd.cut(y_true, bins=5, labels=['Low', 'Med-Low', 'Medium', 'Med-High', 'High'])
+        error_by_range = pd.DataFrame({
+            'price_range': price_ranges,
+            'absolute_error': np.abs(residuals)
+        })
+        
+        plt.subplot(1, 2, 1)
+        sns.boxplot(data=error_by_range, x='price_range', y='absolute_error')
+        plt.title('Prediction Error by Price Range')
+        plt.ylabel('Absolute Error')
+        plt.xticks(rotation=45)
+        
+        # 5. Percentage error by price range
+        plt.subplot(1, 2, 2)
+        percentage_error = (np.abs(residuals) / y_true) * 100
+        error_by_range['percentage_error'] = percentage_error
+        sns.boxplot(data=error_by_range, x='price_range', y='percentage_error')
+        plt.title('Percentage Error by Price Range')
+        plt.ylabel('Percentage Error (%)')
+        plt.xticks(rotation=45)
+        
+        plt.tight_layout()
+        plt.show()
+    
+    def _analyze_feature_importance(self, X_train):
+        """
+        Analyze and visualize feature importance
+        
+        Feature importance analysis helps understand which features
+        contribute most to the model's predictions.
+        
+        Args:
+            X_train (pd.DataFrame): Training features
+        """
+        print("\nAnalyzing feature importance...")
+        
+        # Get feature importance from the model
+        feature_importance = self.rf_model.feature_importances_
+        
+        # Create feature importance DataFrame
+        self.feature_importance_df = pd.DataFrame({
+            'feature': X_train.columns,
+            'importance': feature_importance
         }).sort_values('importance', ascending=False)
         
-        self.feature_importance_df = feature_importance
+        # Print top 20 features
+        print("Top 20 most important features:")
+        print(self.feature_importance_df.head(20))
         
-        # Plot feature importance
-        plt.figure(figsize=(12, 8))
-        top_features = feature_importance.head(top_n)
-        sns.barplot(data=top_features, y='feature', x='importance')
-        plt.title(f'Top {top_n} Feature Importance - Random Forest')
+        # Create visualizations
+        plt.figure(figsize=(15, 10))
+        
+        # 1. Top 20 features bar plot
+        plt.subplot(2, 2, 1)
+        top_20 = self.feature_importance_df.head(20)
+        sns.barplot(data=top_20, x='importance', y='feature')
+        plt.title('Top 20 Feature Importance')
         plt.xlabel('Importance')
+        
+        # 2. Feature importance distribution
+        plt.subplot(2, 2, 2)
+        plt.hist(feature_importance, bins=30, alpha=0.7, edgecolor='black')
+        plt.xlabel('Feature Importance')
+        plt.ylabel('Frequency')
+        plt.title('Feature Importance Distribution')
+        
+        # 3. Cumulative importance
+        plt.subplot(2, 2, 3)
+        cumulative_importance = np.cumsum(self.feature_importance_df['importance'])
+        plt.plot(range(1, len(cumulative_importance) + 1), cumulative_importance)
+        plt.xlabel('Number of Features')
+        plt.ylabel('Cumulative Importance')
+        plt.title('Cumulative Feature Importance')
+        plt.grid(True, alpha=0.3)
+        
+        # 4. Feature importance by category
+        plt.subplot(2, 2, 4)
+        # Categorize features
+        categories = []
+        for feature in self.feature_importance_df['feature']:
+            if any(keyword in feature.lower() for keyword in ['price', 'cost', 'value']):
+                categories.append('Price-related')
+            elif any(keyword in feature.lower() for keyword in ['sqft', 'size', 'area']):
+                categories.append('Size-related')
+            elif any(keyword in feature.lower() for keyword in ['room', 'bed', 'bath']):
+                categories.append('Room-related')
+            elif any(keyword in feature.lower() for keyword in ['nbhd', 'neighborhood', 'location']):
+                categories.append('Location-related')
+            elif any(keyword in feature.lower() for keyword in ['age', 'built', 'year']):
+                categories.append('Age-related')
+            else:
+                categories.append('Other')
+        
+        self.feature_importance_df['category'] = categories
+        category_importance = self.feature_importance_df.groupby('category')['importance'].sum().sort_values(ascending=False)
+        
+        plt.pie(category_importance.values, labels=category_importance.index, autopct='%1.1f%%')
+        plt.title('Feature Importance by Category')
+        
         plt.tight_layout()
         plt.show()
         
         # Permutation importance for more robust analysis
-        print("Calculating permutation importance...")
-        perm_importance = permutation_importance(
-            self.rf_model, self.X_test, self.y_test, 
-            n_repeats=10, random_state=self.random_state
-        )
-        
-        perm_importance_df = pd.DataFrame({
-            'feature': self.feature_names,
-            'importance_mean': perm_importance.importances_mean,
-            'importance_std': perm_importance.importances_std
-        }).sort_values('importance_mean', ascending=False)
-        
-        # Plot permutation importance
-        plt.figure(figsize=(12, 8))
-        top_perm_features = perm_importance_df.head(top_n)
-        plt.barh(range(len(top_perm_features)), top_perm_features['importance_mean'])
-        plt.yticks(range(len(top_perm_features)), top_perm_features['feature'])
-        plt.xlabel('Permutation Importance')
-        plt.title(f'Top {top_n} Permutation Importance - Random Forest')
-        plt.gca().invert_yaxis()
-        plt.tight_layout()
-        plt.show()
-        
-        return feature_importance, perm_importance_df
-    
-    def cross_validate_model(self, X, y, cv=5):
-        """Perform cross-validation"""
-        print(f"\nPerforming {cv}-fold cross-validation...")
-        
-        if self.rf_model is None:
-            raise ValueError("Model not trained yet. Call train_random_forest() first.")
-        
-        cv_scores = cross_val_score(
-            self.rf_model, X, y, cv=cv, 
-            scoring='neg_mean_squared_error'
-        )
-        
-        cv_rmse = np.sqrt(-cv_scores)
-        
-        print(f"Cross-validation RMSE: {cv_rmse.mean():.4f} (+/- {cv_rmse.std() * 2:.4f})")
-        print(f"Individual fold RMSE: {cv_rmse}")
-        
-        return cv_rmse
-    
-    def visualize_predictions(self):
-        """Visualize model predictions"""
-        if self.rf_model is None:
-            raise ValueError("Model not trained yet. Call train_random_forest() first.")
-        
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        
-        # Actual vs Predicted - Training
-        axes[0, 0].scatter(self.y_train, self.y_pred_train, alpha=0.6)
-        axes[0, 0].plot([self.y_train.min(), self.y_train.max()], 
-                       [self.y_train.min(), self.y_train.max()], 'r--', lw=2)
-        axes[0, 0].set_xlabel('Actual Sale Price')
-        axes[0, 0].set_ylabel('Predicted Sale Price')
-        axes[0, 0].set_title('Training Set: Actual vs Predicted')
-        
-        # Actual vs Predicted - Testing
-        axes[0, 1].scatter(self.y_test, self.y_pred_test, alpha=0.6)
-        axes[0, 1].plot([self.y_test.min(), self.y_test.max()], 
-                       [self.y_test.min(), self.y_test.max()], 'r--', lw=2)
-        axes[0, 1].set_xlabel('Actual Sale Price')
-        axes[0, 1].set_ylabel('Predicted Sale Price')
-        axes[0, 1].set_title('Test Set: Actual vs Predicted')
-        
-        # Residuals - Training
-        train_residuals = self.y_train - self.y_pred_train
-        axes[1, 0].scatter(self.y_pred_train, train_residuals, alpha=0.6)
-        axes[1, 0].axhline(y=0, color='r', linestyle='--')
-        axes[1, 0].set_xlabel('Predicted Sale Price')
-        axes[1, 0].set_ylabel('Residuals')
-        axes[1, 0].set_title('Training Set: Residuals')
-        
-        # Residuals - Testing
-        test_residuals = self.y_test - self.y_pred_test
-        axes[1, 1].scatter(self.y_pred_test, test_residuals, alpha=0.6)
-        axes[1, 1].axhline(y=0, color='r', linestyle='--')
-        axes[1, 1].set_xlabel('Predicted Sale Price')
-        axes[1, 1].set_ylabel('Residuals')
-        axes[1, 1].set_title('Test Set: Residuals')
-        
-        plt.tight_layout()
-        plt.show()
+        print("\nCalculating permutation importance...")
+        try:
+            perm_importance = permutation_importance(
+                self.rf_model, X_train, self.y_train,
+                n_repeats=5, random_state=self.random_state, n_jobs=-1
+            )
+            
+            # Create permutation importance DataFrame
+            perm_importance_df = pd.DataFrame({
+                'feature': X_train.columns,
+                'importance_mean': perm_importance.importances_mean,
+                'importance_std': perm_importance.importances_std
+            }).sort_values('importance_mean', ascending=False)
+            
+            print("Top 10 features by permutation importance:")
+            print(perm_importance_df.head(10))
+            
+        except Exception as e:
+            print(f"Could not calculate permutation importance: {e}")
     
     def save_model(self, filepath):
-        """Save the trained model and preprocessing objects"""
-        if self.rf_model is None:
-            raise ValueError("Model not trained yet. Call train_random_forest() first.")
+        """
+        Save the trained model and preprocessing components
         
-        model_data = {
+        This method saves all necessary components for model deployment:
+        - Trained Random Forest model
+        - Feature scaler
+        - Label encoders
+        - Feature names
+        
+        Args:
+            filepath (str): Path to save the model (without extension)
+        """
+        if self.rf_model is None:
+            raise ValueError("No model trained yet. Please train a model first.")
+        
+        print(f"\nSaving model to {filepath}...")
+        
+        # Create model package
+        model_package = {
             'model': self.rf_model,
+            'scaler': self.scaler,
             'label_encoders': self.label_encoders,
             'feature_names': self.feature_names,
-            'timestamp': datetime.now().isoformat()
+            'feature_importance': self.feature_importance_df,
+            'engineered_features': self.engineered_features,
+            'model_metadata': {
+                'training_date': datetime.now().isoformat(),
+                'model_type': 'RandomForestRegressor',
+                'n_features': len(self.feature_names),
+                'random_state': self.random_state
+            }
         }
         
-        joblib.dump(model_data, filepath)
-        print(f"Model saved to {filepath}")
+        # Save model package
+        joblib.dump(model_package, f"{filepath}.pkl")
+        
+        print(f"Model saved successfully to {filepath}.pkl")
+        
+        # Save feature importance as CSV
+        if self.feature_importance_df is not None:
+            self.feature_importance_df.to_csv(f"{filepath}_feature_importance.csv", index=False)
+            print(f"Feature importance saved to {filepath}_feature_importance.csv")
     
     def load_model(self, filepath):
-        """Load a trained model and preprocessing objects"""
-        model_data = joblib.load(filepath)
-        self.rf_model = model_data['model']
-        self.label_encoders = model_data['label_encoders']
-        self.feature_names = model_data['feature_names']
-        print(f"Model loaded from {filepath}")
+        """
+        Load a previously saved model
+        
+        Args:
+            filepath (str): Path to the saved model file
+        """
+        print(f"\nLoading model from {filepath}...")
+        
+        # Load model package
+        model_package = joblib.load(filepath)
+        
+        # Restore components
+        self.rf_model = model_package['model']
+        self.scaler = model_package['scaler']
+        self.label_encoders = model_package['label_encoders']
+        self.feature_names = model_package['feature_names']
+        self.feature_importance_df = model_package.get('feature_importance')
+        self.engineered_features = model_package.get('engineered_features', [])
+        
+        print("Model loaded successfully!")
+        print(f"Model type: {model_package['model_metadata']['model_type']}")
+        print(f"Number of features: {model_package['model_metadata']['n_features']}")
+        print(f"Training date: {model_package['model_metadata']['training_date']}")
     
-    def predict_new_data(self, new_data):
-        """Make predictions on new data"""
+    def predict(self, X_new):
+        """
+        Make predictions on new data
+        
+        Args:
+            X_new (pd.DataFrame): New data for prediction
+            
+        Returns:
+            np.array: Predicted values
+        """
         if self.rf_model is None:
-            raise ValueError("Model not trained yet. Call train_random_forest() first.")
+            raise ValueError("No model trained yet. Please train a model first.")
         
-        # Preprocess new data
-        new_data_processed = new_data.copy()
+        print(f"\nMaking predictions for {len(X_new)} samples...")
         
-        # Apply same preprocessing as training data
-        categorical_features = [feat for feat in new_data_processed.columns if new_data_processed[feat].dtype == 'O']
+        # Ensure feature consistency
+        X_processed = X_new.copy()
         
-        for feature in categorical_features:
-            if feature in self.label_encoders:
-                new_data_processed[feature] = self.label_encoders[feature].transform(new_data_processed[feature].astype(str))
+        # Handle categorical variables
+        for col, encoder in self.label_encoders.items():
+            if col in X_processed.columns:
+                X_processed[col] = encoder.transform(X_processed[col].astype(str))
+        
+        # Ensure all required features are present
+        missing_features = set(self.feature_names) - set(X_processed.columns)
+        if missing_features:
+            raise ValueError(f"Missing required features: {missing_features}")
+        
+        # Select and order features
+        X_processed = X_processed[self.feature_names]
+        
+        # Scale features
+        X_scaled = self.scaler.transform(X_processed)
         
         # Make predictions
-        predictions = self.rf_model.predict(new_data_processed)
+        predictions = self.rf_model.predict(X_scaled)
         
         return predictions
-
-# Example usage
-def main():
-    """Example usage of the Random Forest pipeline"""
     
-    # Initialize the pipeline
-    rf_pipeline = RandomForestRealEstatePipeline(random_state=42)
-    
-    # Load and preprocess data
-    df = rf_pipeline.load_and_preprocess_data('real_estate_dataset.csv')
-    
-    # Handle missing values and outliers
-    missing_summary = rf_pipeline.handle_missing_values()
-    outlier_summary = rf_pipeline.handle_outliers(method='cap')
-    
-    # Feature engineering
-    df_engineered = rf_pipeline.feature_engineering()
-    
-    # Prepare features and target
-    X, y = rf_pipeline.prepare_features_target(target_column='Sale_price')
-    
-    # Train Random Forest
-    results = rf_pipeline.train_random_forest(X, y, optimize_hyperparameters=True)
-    
-    # Analyze feature importance
-    feature_imp, perm_imp = rf_pipeline.analyze_feature_importance(top_n=20)
-    
-    # Cross-validate
-    cv_scores = rf_pipeline.cross_validate_model(X, y, cv=5)
-    
-    # Visualize predictions
-    rf_pipeline.visualize_predictions()
-    
-    # Save model
-    # rf_pipeline.save_model('random_forest_real_estate_model.pkl')
-    
-    print("\nRandom Forest Real Estate Pipeline completed successfully!")
+    def run_complete_pipeline(self, filepath, target_column='Sale_price'):
+        """
+        Run the complete machine learning pipeline
+        
+        This method orchestrates the entire pipeline from data loading
+        to model training and evaluation.
+        
+        Args:
+            filepath (str): Path to the dataset
+            target_column (str): Name of the target variable
+            
+        Returns:
+            dict: Complete pipeline results
+        """
+        print("="*60)
+        print("RUNNING COMPLETE RANDOM FOREST PIPELINE")
+        print("="*60)
+        
+        pipeline_results = {}
+        
+        try:
+            # 1. Load and analyze data
+            start_time = datetime.now()
+            self.load_and_preprocess_data(filepath)
+            pipeline_results['data_loading'] = 'Success'
+            
+            # 2. Feature engineering
+            self.advanced_feature_engineering()
+            pipeline_results['feature_engineering'] = 'Success'
+            
+            # 3. Data preprocessing
+            self.advanced_data_preprocessing()
+            pipeline_results['preprocessing'] = 'Success'
+            
+            # 4. Prepare features and target
+            X, y = self.prepare_features_and_target(target_column)
+            pipeline_results['feature_preparation'] = 'Success'
+            
+            # 5. Train model
+            evaluation_results = self.train_random_forest_model(X, y)
+            pipeline_results['model_training'] = 'Success'
+            pipeline_results['evaluation_metrics'] = evaluation_results
+            
+            # 6. Pipeline completion
+            end_time = datetime.now()
+            pipeline_results['total_duration'] = str(end_time - start_time)
+            pipeline_results['completion_status'] = 'Success'
+            
+            print("\n" + "="*60)
+            print("PIPELINE COMPLETED SUCCESSFULLY")
+            print("="*60)
+            print(f"Total duration: {pipeline_results['total_duration']}")
+            print(f"Final dataset shape: {self.df.shape}")
+            print(f"Number of features: {len(self.feature_names)}")
+            print(f"Test R² score: {evaluation_results['test_r2']:.4f}")
+            print(f"Test RMSE: {evaluation_results['test_rmse']:,.2f}")
+            
+            return pipeline_results
+            
+        except Exception as e:
+            pipeline_results['error'] = str(e)
+            pipeline_results['completion_status'] = 'Failed'
+            print(f"\nPipeline failed with error: {e}")
+            return pipeline_results
 
 if __name__ == "__main__":
-    main()
+    # Initialize pipeline
+    pipeline = RandomForestRealEstatePipeline(random_state=42)
+    
+    # Run complete pipeline
+    results = pipeline.run_complete_pipeline('real_estate_dataset.csv')
+    
+    # Save the trained model
+    #pipeline.save_model('trained_rf_model')
+    
+    # Making predictions on new data
+    # new_data = pd.read_csv('new_properties.csv')
+    # predictions = pipeline.predict(new_data)
