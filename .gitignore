@@ -1,0 +1,22 @@
+.vscode/
+.idea
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+# Python bytecode files
+*.pyc
+# Virtual environment directories
+.venv/
+# Cache directories
+__pycache__/
+# Model files
+*.pkl
+# Logs
+*.log
+# Temporary files
+*.tmp
+# Backup files
+*.bak
+# Environment files
+.env
+# Configuration files
+*.cfg
