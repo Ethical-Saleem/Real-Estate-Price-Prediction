@@ -1,0 +1,454 @@
+{% extends 'account/base_auth.html' %}
+
+{% load i18n static %}
+
+{% block head_title %}
+  {% trans 'Signup' %}
+{% endblock head_title %}
+
+{% block auth_form %}
+  <div class="flex flex-1 flex-col h-full w-full max-h-screen justify-center items-center">
+    <div class="w-full max-w-xl mx-auto p-6">
+      <div class="text-center mb-4">
+        <img src="{% static 'icons/palconnect_logo.png' %}" alt="palconnect_logo" class="w-[190px] h-[60px] mx-auto" />
+        <h1 class="text-2xl md:text-3xl xl:text-4xl text-center font-medium mb-3 capitalize">Join our affiliate program</h1>
+        <p class="text-sm">
+          Earn commissions and grow with us. Sign up to get started!
+        </p>
+      </div>
+      <div class="mb-4">
+        <div class="grid grid-cols-4 gap-[20px] mb-4">
+          {% for step in steps %}
+            <div class="w-full h-[3px] {% if step.number <= current_step %} bg-[#10A3E7] {% else %} bg-[#CACACA] {% endif %} {% if not forloop.last %} flex-1 {% endif %}">
+            </div>
+          {% endfor %}
+        </div>
+        <p class="text-sm font-semibold">Step {{ current_step }} of {{ total_steps }}</p>
+      </div>
+      <form method="post" class="space-y-4">
+        {% csrf_token %}
+        <input type="hidden" name="current_step" value="{{ current_step }}" />
+
+        {% if current_step == 1 %}
+          <div class="step-content">
+            <h1 class="mb-4">Personal Information</h1>
+            <div class="space-y-4">
+              <div>
+                <label htmlFor="full_name" class="sr-only">Full Name</label>
+                <input
+                  type="text"
+                  id="full_name"
+                  name="full_name"
+                  value="{{ form.full_name.value|default:'' }}"
+                  class="w-full px-3 py-2 border-b border-[#33333380] text-[#333333] placeholder:text-[#33333380] focus:outline-none"
+                  placeholder="Full Name"
+                  required
+                />
+              </div>
+              <div>
+                <label htmlFor="email" class="sr-only">Email</label>
+                <input
+                  type="text"
+                  id="email"
+                  name="email"
+                  value="{{ form.email.value|default:'' }}"
+                  class="w-full px-3 py-2 border-b border-[#33333380] text-[#333333] placeholder:text-[#33333380] focus:outline-none"
+                  placeholder="Email"
+                  required
+                />
+              </div>
+              <div>
+                <label htmlFor="email" class="sr-only">Email</label>
+                <input
+                  type="tel"
+                  id="phone_number"
+                  name="phone_number"
+                  value="{{ form.phone_number.value|default:'' }}"
+                  class="w-full px-3 py-2 border-b border-[#33333380] text-[#333333] placeholder:text-[#33333380] focus:outline-none"
+                  placeholder="Phone Number (optional)"
+                  required
+                />
+              </div>
+            </div>
+          </div>
+        {% elif current_step == 2 %}
+          <!-- Step 2: Account Details -->
+          <div class="step-content">
+            <h2 class="text-xl font-semibold mb-4">Account Details</h2>
+
+            <div class="space-y-4">
+              <div>
+                <label for="username" class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                <input type="text"
+                       id="username"
+                       name="username"
+                       value="{{ form.username.value|default:'' }}"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                       required />
+                {% if form.username.errors %}
+                  <div class="text-red-600 text-sm mt-1">{{ form.username.errors.0 }}</div>
+                {% endif %}
+              </div>
+
+              <div>
+                <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                <input type="password"
+                       id="password"
+                       name="password"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                       required />
+                {% if form.password.errors %}
+                  <div class="text-red-600 text-sm mt-1">{{ form.password.errors.0 }}</div>
+                {% endif %}
+              </div>
+
+              <div>
+                <label for="confirm_password" class="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+                <input type="password"
+                       id="confirm_password"
+                       name="confirm_password"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                       required />
+                {% if form.confirm_password.errors %}
+                  <div class="text-red-600 text-sm mt-1">{{ form.confirm_password.errors.0 }}</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+        {% elif current_step == 3 %}
+          <!-- Step 3: Payment Details -->
+          <div class="step-content">
+            <h2 class="text-xl font-semibold mb-4">Payment Details</h2>
+
+            <div class="space-y-4">
+              <div>
+                <label for="payment_method" class="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+                <select id="payment_method"
+                        name="payment_method"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        required>
+                  <option value="">Select payment method</option>
+                  <option value="bank_transfer" {% if form.payment_method.value == 'bank_transfer' %}selected{% endif %}>Bank Transfer</option>
+                  <option value="paypal" {% if form.payment_method.value == 'paypal' %}selected{% endif %}>PayPal</option>
+                  <option value="stripe" {% if form.payment_method.value == 'stripe' %}selected{% endif %}>Credit/Debit Card</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="bank_account" class="block text-sm font-medium text-gray-700 mb-1">Bank Account/PayPal Email</label>
+                <input type="text"
+                       id="bank_account"
+                       name="bank_account"
+                       value=""
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                       placeholder="Enter your bank account number or PayPal email"
+                       required />
+              </div>
+
+              <div>
+                <label for="tax_id" class="block text-sm font-medium text-gray-700 mb-1">Tax ID (Optional)</label>
+                <input type="text"
+                       id="tax_id"
+                       name="tax_id"
+                       value=""
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                       placeholder="Tax identification number" />
+              </div>
+            </div>
+          </div>
+
+        {% elif current_step == 4 %}
+          <!-- Step 4: Marketing Preferences -->
+          <div class="step-content">
+            <h2 class="text-xl font-semibold mb-4">Marketing Preferences</h2>
+
+            <div class="space-y-4">
+              <div class="flex items-start">
+                <input type="checkbox"
+                       id="email_marketing"
+                       name="email_marketing"
+                       value="1"
+                       class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded" />
+                <label for="email_marketing" class="ml-2 block text-sm text-gray-700">
+                  I want to receive marketing emails about new opportunities and promotions
+                </label>
+              </div>
+
+              <div class="flex items-start">
+                <input type="checkbox"
+                       id="sms_marketing"
+                       name="sms_marketing"
+                       value="1"
+                       class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded" />
+                <label for="sms_marketing" class="ml-2 block text-sm text-gray-700">
+                  I want to receive SMS notifications about urgent updates
+                </label>
+              </div>
+
+              <div class="flex items-start">
+                <input type="checkbox"
+                       id="newsletter"
+                       name="newsletter"
+                       value="1"
+                       class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded" />
+                <label for="newsletter" class="ml-2 block text-sm text-gray-700">
+                  Subscribe to our monthly newsletter with tips and insights
+                </label>
+              </div>
+
+              <div class="flex items-start">
+                <input type="checkbox"
+                       id="terms_conditions"
+                       name="terms_conditions"
+                       value="1"
+                       class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                       required />
+                <label for="terms_conditions" class="ml-2 block text-sm text-gray-700">
+                  I agree to the <a href="#" class="text-blue-600 hover:text-blue-500">Terms and Conditions</a> and <a href="#" class="text-blue-600 hover:text-blue-500">Privacy Policy</a>
+                </label>
+              </div>
+            </div>
+          </div>
+
+        {% endif %}
+
+        <div class="flex justify-between pt-6">
+
+          {% if current_step == 1 %}
+            <button typ="submit" class="bg-[#FFFFFF] text-[#10A3E7] rounded-full focus:outline-none focus:ring-2 focus:ring-[#10A3E7] focus:ring-offset-2 px-4 py-2">Previous</button>
+          {% endif %}
+
+          {% if current_step < total_steps %}
+            <button typ="submit" name="next_step" value="1" class="bg-[#10A3E7] text-[#FFFFFF] rounded-full focus:outline-none focus:ring-2 focus:ring-[#10A3E7] focus:ring-offset-2 px-4 py-2">Continue</button>
+          {% else %}
+            <button typ="submit" class="bg-[#10A3E7] text-[#FFFFFF] rounded-full focus:outline-none focus:ring-2 focus:ring-[#10A3E7] focus:ring-offset-2 px-4 py-2">Complete Signup</button>
+          {% endif %}
+
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock auth_form %}
+
+class MultiStepSignupView(View):
+    template_name = "account/signup.html"
+    form_class = MultiStepSignupForm
+
+    def get_session_key(self, step):
+        """Generate session key for storing step data"""
+        return f"signup_step_{step}_data"
+
+    def get_current_step(self, request):
+        """Get current step from request or session"""
+        if "current_step" in request.POST:
+            step = int(request.POST.get("current_step", 1))
+        else:
+            step = request.session.get("signup_current_step", 1)
+        return max(1, min(step, 4))  # Ensure step is between 1 and 4
+
+    def get_all_form_data(self, request):
+        """Retrieve all form data from session"""
+        all_data = {}
+        for step in range(1, 5):
+            step_data = request.session.get(self.get_session_key(step), {})
+            all_data.update(step_data)
+        return all_data
+
+    def save_step_data(self, request, step, data):
+        """Save step data to session"""
+        request.session[self.get_session_key(step)] = data
+        request.session.modified = True
+
+    def get_context_data(self, request, form, current_step):
+        """Get template context data"""
+        steps = [
+            {"number": 1, "name": "Personal Information"},
+            {"number": 2, "name": "Account Details"},
+            {"number": 3, "name": "Payment Details"},
+            {"number": 4, "name": "Marketing Preferences"},
+        ]
+
+        return {
+            "form": form,
+            "current_step": current_step,
+            "total_steps": 4,
+            "steps": steps,
+        }
+
+    def get(self, request):
+        """Handle GET request"""
+        current_step = self.get_current_step(request)
+
+        # Initialize form with all saved data
+        all_data = self.get_all_form_data(request)
+        form = self.form_class(initial=all_data)
+
+        request.session["signup_current_step"] = current_step
+
+        context = self.get_context_data(request, form, current_step)
+        return render(request, self.template_name, context)
+
+    def post(self, request):
+        """Handle POST request"""
+        current_step = self.get_current_step(request)
+
+        # Get all existing data and update with current form data
+        all_data = self.get_all_form_data(request)
+        form_data = request.POST.dict()
+        form_data.update(all_data)
+
+        form = self.form_class(form_data)
+
+        # Handle navigation
+        if "prev_step" in request.POST and current_step > 1:
+            # Go to previous step
+            current_step -= 1
+            request.session["signup_current_step"] = current_step
+            context = self.get_context_data(request, form, current_step)
+            return render(request, self.template_name, context)
+
+        elif "next_step" in request.POST:
+            # Validate current step
+            try:
+                # Call full_clean to populate cleaned_data
+                form.full_clean()
+
+                print(f"DEBUG: Current step: {current_step}")
+                print(f"DEBUG: Form data: {form_data}")
+                print(f"DEBUG: Form errors before step validation: {form.errors}")
+
+                if current_step == 1:
+                    form.clean_step_1()
+                elif current_step == 2:
+                    form.clean_step_2()
+                elif current_step == 3:
+                    form.clean_step_3()
+                elif current_step == 4:
+                    form.clean_step_4()
+
+                print("DEBUG: Step validation passed")
+
+                # Save current step data
+                step_data = {}
+                if current_step == 1:
+                    step_data = {
+                        "full_name": form_data.get("full_name"),
+                        "email": form_data.get("email"),
+                        "phone_number": form_data.get("phone_number"),
+                    }
+                elif current_step == 2:
+                    step_data = {
+                        "username": form_data.get("username"),
+                        "password": form_data.get("password"),
+                        "confirm_password": form_data.get("confirm_password"),
+                    }
+                elif current_step == 3:
+                    step_data = {
+                        "payment_method": form_data.get("payment_method"),
+                        "bank_account": form_data.get("bank_account"),
+                        "tax_id": form_data.get("tax_id"),
+                    }
+                elif current_step == 4:
+                    step_data = {
+                        "email_marketing": form_data.get("email_marketing") == "1",
+                        "sms_marketing": form_data.get("sms_marketing") == "1",
+                        "newsletter": form_data.get("newsletter") == "1",
+                        "terms_conditions": form_data.get("terms_conditions") == "1",
+                    }
+
+                self.save_step_data(request, current_step, step_data)
+                print(f"DEBUG: Step Data saved: {step_data}")
+
+                # Move to next step
+                current_step += 1
+                request.session["signup_current_step"] = current_step
+                print(f"DEBUG: Moving to step: {current_step}")
+
+                # Create new form instance for next step
+                all_data = self.get_all_form_data(request)
+                form = self.form_class(initial=all_data)
+
+                context = self.get_context_data(request, form, current_step)
+                return render(request, self.template_name, context)
+
+            except ValidationError as e:
+                print(f"DEBUG: Validation error: {e}")
+                # Add form errors
+                if hasattr(e, "error_dict"):
+                    for field, errors in e.error_dict.items():
+                        form.add_error(field, errors)
+                else:
+                    # Handle non-field errors
+                    form.add_error(None, str(e))
+
+                context = self.get_context_data(request, form, current_step)
+                return render(request, self.template_name, context)
+
+        elif "complete_signup" in request.POST:
+            # Complete the signup process
+            try:
+                # Call full_clean to populate cleaned_data
+                form.full_clean()
+
+                # Validate all steps
+                form.clean_step_1()
+                form.clean_step_2()
+                form.clean_step_3()
+                form.clean_step_4()
+
+                # Create user
+                with transaction.atomic():
+                    user = User.objects.create_user(
+                        username=form_data.get("username"),
+                        email=form_data.get("email"),
+                        password=form_data.get("password"),
+                        first_name=form_data.get("full_name", "").split()[0]
+                        if form_data.get("full_name")
+                        else "",
+                        last_name=" ".join(form_data.get("full_name", "").split()[1:])
+                        if form_data.get("full_name")
+                        else "",
+                    )
+
+                    # Here you would typically create additional profile models
+                    # For example, an AffiliateProfile model to store additional data
+                    """
+                    AffiliateProfile.objects.create(
+                        user=user,
+                        phone_number=form_data.get('phone_number'),
+                        payment_method=form_data.get('payment_method'),
+                        bank_account=form_data.get('bank_account'),
+                        tax_id=form_data.get('tax_id'),
+                        email_marketing=form_data.get('email_marketing', False),
+                        sms_marketing=form_data.get('sms_marketing', False),
+                        newsletter=form_data.get('newsletter', False),
+                    )
+                    """
+
+                # Clear session data
+                for step in range(1, 5):
+                    request.session.pop(self.get_session_key(step), None)
+                request.session.pop("signup_current_step", None)
+
+                # Log user in
+                login(request, user)
+
+                messages.success(
+                    request, "Welcome! Your account has been created successfully."
+                )
+                return redirect(
+                    "account_login"
+                )  # Redirect to dashboard or wherever appropriate
+
+            except ValidationError as e:
+                # Add form errors
+                for field, errors in e.error_dict.items():
+                    form.add_error(field, errors)
+
+                context = self.get_context_data(request, form, current_step)
+                return render(request, self.template_name, context)
+
+        # Default case - render current step
+        context = self.get_context_data(request, form, current_step)
+        return render(request, self.template_name, context)
